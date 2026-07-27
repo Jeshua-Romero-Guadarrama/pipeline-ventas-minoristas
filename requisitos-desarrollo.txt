@@ -1,0 +1,8 @@
+# Dependencias que solo hacen falta para desarrollar y para probar.
+# La instalación va aparte con el fin de mantener liviana la imagen de producción.
+
+-r requisitos.txt
+
+pytest==8.3.4
+pytest-cov==6.0.0
+ruff==0.8.6

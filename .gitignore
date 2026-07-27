@@ -1,0 +1,65 @@
+# Los entornos virtuales de Python se reconstruyen en cada máquina y no se versionan.
+.venv/
+venv/
+env/
+
+# Los archivos compilados y los cachés de las herramientas se regeneran solos.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# El archivo de entorno guarda las credenciales reales, motivo por el cual queda fuera del repositorio.
+.env
+
+# Los certificados de confianza son específicos de cada máquina.
+# Por ello se conserva la carpeta y su explicación, pero no los archivos, que no sirven en otra red.
+docker/certificados/*.crt
+docker/certificados/*.pem
+
+# El documento de entrega se genera a partir del código y de los resultados de la última corrida.
+# Puesto que se reconstruye en cualquier momento con "python -m scripts.generar_documento_entrega", versionarlo solo agregaría un binario que queda desactualizado en cuanto cambia una cifra.
+*.docx
+
+# El identificador anónimo que dbt genera por instalación cambia en cada máquina y no aporta nada al proyecto.
+dbt/.user.yml
+
+# Los datos crudos pesan demasiado para versionarlos.
+datos/crudos/*
+!datos/crudos/.gitkeep
+
+# Los resultados los genera el pipeline en cada corrida.
+salida/*
+!salida/.gitkeep
+
+# Los artefactos de dbt se reconstruyen con cada ejecución.
+# Cabe señalar que .user.yml guarda un identificador anónimo que dbt genera por instalación, no aporta nada al proyecto y cambia en cada máquina.
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+
+# Los artefactos de Airflow dependen del estado local del orquestador.
+orquestacion/logs/
+orquestacion/*.cfg
+orquestacion/*.db
+orquestacion/webserver_config.py
+
+# Los artefactos de Spark quedan en la carpeta desde la que se lanzó el trabajo.
+spark-warehouse/
+metastore_db/
+derby.log
+
+# La configuración de los editores es una preferencia de cada persona.
+.vscode/
+.idea/
+*.swp
+
+# Los archivos siguientes los deja el sistema operativo sin que nadie los pida.
+Thumbs.db
+Desktop.ini
+.DS_Store

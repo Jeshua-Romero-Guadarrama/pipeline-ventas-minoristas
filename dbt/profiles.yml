@@ -1,0 +1,37 @@
+# Conexión de dbt al almacén analítico.
+#
+# Ningún dato sensible está escrito acá, puesto que todo sale de variables de entorno.
+# De ese modo el archivo se puede versionar sin exponer credenciales, y el mismo proyecto sirve para el entorno local, para la integración continua y para producción cambiando únicamente esas variables.
+
+ventas_minoristas:
+  target: local
+
+  outputs:
+
+    local:
+      type: postgres
+      host: "{{ env_var('ALMACEN_HOST', 'postgres') }}"
+      port: "{{ env_var('ALMACEN_PUERTO', '5432') | int }}"
+      user: "{{ env_var('ALMACEN_USUARIO', 'analitica') }}"
+      password: "{{ env_var('ALMACEN_CONTRASENA', 'analitica') }}"
+      dbname: "{{ env_var('ALMACEN_BASE', 'analitica') }}"
+      schema: publicado
+      # Cuatro hilos permiten construir en paralelo los modelos que no dependen entre sí.
+      # Sin embargo, subir bastante más ese número solo agrega contención sobre la base.
+      threads: 4
+      keepalives_idle: 0
+      connect_timeout: 10
+      retries: 2
+
+    integracion_continua:
+      type: postgres
+      host: "{{ env_var('ALMACEN_HOST', 'localhost') }}"
+      port: "{{ env_var('ALMACEN_PUERTO', '5432') | int }}"
+      user: "{{ env_var('ALMACEN_USUARIO', 'analitica') }}"
+      password: "{{ env_var('ALMACEN_CONTRASENA', 'analitica') }}"
+      dbname: "{{ env_var('ALMACEN_BASE', 'analitica') }}"
+      # En integración continua cada corrida usa su propio esquema, de manera que dos ramas construyéndose a la vez no se pisen los resultados.
+      schema: "ci_{{ env_var('ID_CORRIDA_CI', 'local') }}"
+      threads: 4
+      connect_timeout: 10
+      retries: 1

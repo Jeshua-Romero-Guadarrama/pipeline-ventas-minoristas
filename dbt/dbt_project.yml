@@ -1,0 +1,79 @@
+# Proyecto de dbt para el modelado del almacén analítico.
+#
+# El pipeline de Python deja los datos crudos en el esquema crudo y a partir de ahí dbt construye las capas de modelado.
+# Al respecto, la separación de responsabilidades es deliberada.
+# Python se ocupa de lo que SQL hace mal, es decir leer archivos, manejar errores de formato y hablar con sistemas externos.
+# SQL, en cambio, se ocupa de lo que hace mejor que nadie, que es transformar tablas.
+#
+# El proyecto usa tres capas.
+#
+#   preparacion   Vistas que limpian los tipos y los nombres, sin ninguna lógica de negocio.
+#   intermedio    Vistas con los cálculos que se comparten entre varios modelos.
+#   publicacion   Tablas materializadas que consumen los tableros.
+
+name: "ventas_minoristas"
+version: "1.0.0"
+config-version: 2
+
+profile: "ventas_minoristas"
+
+model-paths: ["modelos"]
+test-paths: ["pruebas"]
+macro-paths: ["macros"]
+seed-paths: ["semillas"]
+snapshot-paths: ["instantaneas"]
+analysis-paths: ["analisis"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# Las variables siguientes se pueden sobrescribir al invocar dbt sin tocar el código.
+vars:
+  # Umbral de tolerancia que usan las pruebas de coherencia entre capas.
+  # Conviene precisar que un centavo cubre la diferencia acumulada por redondeo sin dejar pasar un error real de cálculo.
+  tolerancia_importes: 0.01
+  # Cantidad de productos que se conservan en el ranking publicado.
+  productos_en_ranking: 50
+
+models:
+  ventas_minoristas:
+    # Las vistas no ocupan espacio y siempre reflejan el dato más reciente, motivo por el cual son la opción por defecto para las capas intermedias.
+    +materialized: view
+
+    preparacion:
+      +schema: preparado
+      +materialized: view
+      +tags: ["preparacion"]
+
+    intermedio:
+      +schema: preparado
+      +materialized: view
+      +tags: ["intermedio"]
+
+    publicacion:
+      # La capa final se materializa como tabla.
+      # Puesto que los tableros consultan estos modelos muchas veces por minuto, recalcular la vista en cada consulta sería innecesariamente caro.
+      +schema: publicado
+      +materialized: table
+      +tags: ["publicacion"]
+
+tests:
+  ventas_minoristas:
+    # Por defecto, una prueba que falla corta la ejecución.
+    # En cambio, las que solo advierten lo declaran explícitamente en su propio archivo.
+    +severity: error
+    +store_failures: true
+    +schema: preparado
+
+seeds:
+  ventas_minoristas:
+    +schema: preparado
+
+# Cada corrida deja su registro, de manera que después se pueda auditar qué se ejecutó y cuánto tardó.
+on-run-start:
+  - "{{ log('Iniciando la construcción de los modelos de ventas minoristas', info=true) }}"
+
+on-run-end:
+  - "{{ log('Construcción finalizada con ' ~ results | length ~ ' resultados', info=true) }}"

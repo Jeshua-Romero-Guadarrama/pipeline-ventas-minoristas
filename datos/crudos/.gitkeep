@@ -1,0 +1,6 @@
+# La presente carpeta recibe el histórico completo de transacciones.
+# El archivo no se versiona porque pesa unos noventa y seis megabytes, de modo que se descarga con el comando siguiente.
+#
+#     python scripts/descargar_dataset.py
+#
+# En caso de que la carpeta esté vacía, el pipeline usa automáticamente la muestra de datos/ejemplos, razón por la cual el proyecto funciona igual recién clonado.

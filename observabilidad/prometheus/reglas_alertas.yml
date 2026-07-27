@@ -1,0 +1,145 @@
+# Reglas de alerta del pipeline de ventas.
+#
+# Cada regla responde a una falla que se puede ver en producción, y todas tienen una acción concreta asociada que está documentada en el runbook.
+# Puesto que una alerta que nadie sabe cómo atender solo genera ruido y termina ignorándose, no se definen alertas informativas.
+#
+# Por su parte, la cláusula "for" existe para evitar los avisos por un pico momentáneo.
+# Es decir, una métrica que se recupera sola en dos minutos no necesitaba que nadie la mirara.
+
+groups:
+
+  - name: ejecucion_del_pipeline
+    interval: 30s
+    rules:
+
+      - alert: PipelineFallo
+        expr: pipeline_ventas_ejecucion_exitosa == 0
+        for: 1m
+        labels:
+          severidad: critica
+          componente: pipeline
+        annotations:
+          resumen: "La última corrida del pipeline de ventas terminó con error."
+          descripcion: >-
+            El indicador de ejecución exitosa está en cero.
+            En consecuencia, los datos publicados corresponden a la corrida anterior.
+            Conviene revisar los registros de la tarea en Airflow y el archivo de cuarentena de la corrida.
+          runbook: "documentacion/runbook.md#el-pipeline-fallo"
+
+      - alert: DatosDesactualizados
+        expr: >-
+          time() - pipeline_ventas_ultima_ejecucion_exitosa_timestamp > 93600
+        for: 10m
+        labels:
+          severidad: alta
+          componente: pipeline
+        annotations:
+          resumen: "Hace más de veintiséis horas que no hay una corrida exitosa."
+          descripcion: >-
+            El pipeline corre una vez por día.
+            En caso de que pasen más de veintiséis horas sin una corrida buena, o bien el programador está caído o bien las tareas vienen fallando en silencio.
+            Mientras tanto, los tableros muestran datos viejos.
+          runbook: "documentacion/runbook.md#los-datos-estan-desactualizados"
+
+      - alert: CalidadDeDatosDegradada
+        expr: pipeline_ventas_porcentaje_rechazo > 10
+        for: 5m
+        labels:
+          severidad: media
+          componente: calidad
+        annotations:
+          resumen: "El porcentaje de filas rechazadas superó el diez por ciento."
+          descripcion: >-
+            Un rechazo por encima de lo habitual suele indicar que cambió el formato del archivo de origen o que hubo un problema en el sistema que lo genera.
+            Cabe señalar que el pipeline corta por su cuenta al llegar al quince por ciento.
+          runbook: "documentacion/runbook.md#suben-los-rechazos-de-calidad"
+
+      - alert: PipelineDemasiadoLento
+        expr: pipeline_ventas_duracion_segundos > 900
+        for: 2m
+        labels:
+          severidad: media
+          componente: pipeline
+        annotations:
+          resumen: "Una etapa del pipeline tardó más de quince minutos."
+          descripcion: >-
+            La etapa {{ $labels.etapa }} superó su tiempo esperado.
+            Al respecto, puede tratarse de un crecimiento real del volumen o de contención de recursos en la máquina que aloja los contenedores.
+          runbook: "documentacion/runbook.md#el-pipeline-tarda-demasiado"
+
+      - alert: CaidaAbruptaDeVolumen
+        expr: >-
+          pipeline_ventas_filas_procesadas{etapa="agregacion"}
+          < 0.5 * avg_over_time(pipeline_ventas_filas_procesadas{etapa="agregacion"}[7d])
+        for: 15m
+        labels:
+          severidad: alta
+          componente: calidad
+        annotations:
+          resumen: "El volumen procesado cayó a menos de la mitad de lo normal."
+          descripcion: >-
+            La cantidad de filas agregadas está muy por debajo del promedio de la última semana.
+            Al respecto, suele significar que llegó un archivo parcial.
+            En consecuencia, los números del tablero van a quedar subestimados.
+          runbook: "documentacion/runbook.md#cayo-el-volumen-procesado"
+
+  - name: infraestructura
+    interval: 30s
+    rules:
+
+      - alert: ServicioCaido
+        expr: up == 0
+        for: 2m
+        labels:
+          severidad: critica
+          componente: infraestructura
+        annotations:
+          resumen: "El servicio {{ $labels.job }} dejó de responder."
+          descripcion: >-
+            Prometheus no logra recolectar métricas de {{ $labels.instance }}.
+            Conviene verificar con docker compose ps si el contenedor sigue en pie.
+          runbook: "documentacion/runbook.md#un-servicio-dejo-de-responder"
+
+      - alert: AlmacenSinConexionesDisponibles
+        expr: >-
+          pg_stat_activity_count / on() group_left pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severidad: alta
+          componente: almacen
+        annotations:
+          resumen: "PostgreSQL está usando más del ochenta por ciento de sus conexiones."
+          descripcion: >-
+            Quedan pocas conexiones libres.
+            En caso de que se agoten, tanto el pipeline como Airflow van a fallar al conectarse.
+          runbook: "documentacion/runbook.md#se-agotan-las-conexiones-del-almacen"
+
+  - name: orquestador
+    interval: 30s
+    rules:
+
+      - alert: TareasDeAirflowFallando
+        expr: increase(airflow_ti_failures[1h]) > 3
+        for: 5m
+        labels:
+          severidad: alta
+          componente: orquestador
+        annotations:
+          resumen: "Más de tres tareas de Airflow fallaron en la última hora."
+          descripcion: >-
+            Un patrón de fallos repetidos indica un problema de fondo y no un error puntual.
+            Conviene revisar los registros del grafo afectado.
+          runbook: "documentacion/runbook.md#fallan-tareas-en-airflow"
+
+      - alert: ProgramadorSinLatido
+        expr: absent(airflow_scheduler_heartbeat) or rate(airflow_scheduler_heartbeat[5m]) == 0
+        for: 5m
+        labels:
+          severidad: critica
+          componente: orquestador
+        annotations:
+          resumen: "El programador de Airflow dejó de emitir latidos."
+          descripcion: >-
+            Sin programador no se dispara ninguna tarea.
+            De ese modo los grafos quedan detenidos, aunque la interfaz web siga respondiendo.
+          runbook: "documentacion/runbook.md#el-programador-de-airflow-no-responde"

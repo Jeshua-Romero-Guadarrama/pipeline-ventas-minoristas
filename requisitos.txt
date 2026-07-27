@@ -1,0 +1,24 @@
+# Dependencias de ejecución del pipeline de ventas.
+#
+# Las versiones están fijadas para que cualquiera que clone el repositorio obtenga exactamente el mismo comportamiento.
+#
+# Todas ellas coinciden con el archivo de restricciones oficial de Apache Airflow 2.10.5 para Python 3.12, y esa alineación es deliberada.
+# Puesto que el pipeline corre dentro del contenedor de Airflow, fijar acá una versión distinta de pandas o de pyarrow haría fallar la construcción de la imagen con un conflicto de dependencias imposible de resolver sin renunciar a una de las dos.
+# En consecuencia, al mantener un único conjunto de versiones, lo que se prueba en local es exactamente lo que corre en producción.
+#
+# Referencia
+#   https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.12.txt
+
+pandas==2.1.4
+pyarrow==19.0.0
+numpy==1.26.4
+duckdb==1.1.3
+SQLAlchemy==1.4.54
+psycopg2-binary==2.9.10
+pyspark==3.5.4
+prometheus_client==0.21.1
+python-dotenv==1.0.1
+PyYAML==6.0.2
+
+# La dependencia siguiente hace falta únicamente para el script que descarga el conjunto de datos original, que viene en formato Excel.
+openpyxl==3.1.5

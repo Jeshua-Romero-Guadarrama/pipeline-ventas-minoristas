@@ -1,0 +1,38 @@
+[project]
+name = "pipeline-ventas-minorista"
+version = "1.0.0"
+description = "Pipeline de datos extremo a extremo sobre transacciones de venta minorista"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "orquestacion/logs", "dbt/target", "dbt/dbt_packages"]
+
+[tool.ruff.lint]
+# Los conjuntos seleccionados cubren preocupaciones distintas: E y W señalan errores de estilo, F detecta variables sin usar e importaciones muertas, I ordena las importaciones, B atrapa fallas lógicas frecuentes y UP moderniza la sintaxis.
+# Adicionalmente, C4 simplifica las construcciones de listas y de diccionarios, mientras que SIM propone equivalentes más directos para los condicionales verbosos.
+select = ["E", "W", "F", "I", "B", "UP", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"orquestacion/dags/*" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["pruebas"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers --tb=short"
+markers = [
+    "lento: Marca las pruebas que levantan una sesión de Spark y tardan más de diez segundos.",
+    "integracion: Marca las pruebas que necesitan servicios externos levantados con Docker.",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["trabajos"]
+omit = ["*/__init__.py", "*/spark/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true

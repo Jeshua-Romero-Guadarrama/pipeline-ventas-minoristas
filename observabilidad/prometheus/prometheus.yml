@@ -1,0 +1,54 @@
+# Configuración de Prometheus para el pipeline de ventas.
+#
+# Al respecto, se recolectan cuatro fuentes distintas y cada una responde una pregunta diferente sobre el sistema.
+#
+#   pushgateway          Qué produjo la última corrida del pipeline.
+#   statsd-exportador    Cómo se está comportando el orquestador.
+#   postgres-exportador  En qué estado se encuentra el almacén analítico.
+#   prometheus           Si el propio sistema de monitoreo está sano.
+
+global:
+  # Quince segundos constituyen un buen punto medio.
+  # Es decir, resulta un intervalo suficientemente frecuente para ver un problema mientras ocurre y suficientemente espaciado para no generar una cantidad de series que después cuesta almacenar.
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    entorno: local
+    proyecto: pipeline-ventas
+
+rule_files:
+  - /etc/prometheus/reglas_alertas.yml
+
+scrape_configs:
+
+  # El primer trabajo recolecta las métricas del propio Prometheus.
+  # De ese modo se sabe si la recolección se está atrasando, que es lo primero que falla cuando algo se desborda.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          componente: monitoreo
+
+  # El segundo trabajo recoge las métricas de negocio y de ejecución que el pipeline empuja al terminar.
+  - job_name: pipeline_ventas
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]
+        labels:
+          componente: pipeline
+
+  # El tercer trabajo trae las métricas internas de Airflow, ya traducidas desde el protocolo StatsD.
+  # Al respecto, ahí se ve la duración de cada tarea, los reintentos y la cola pendiente.
+  - job_name: airflow
+    static_configs:
+      - targets: ["statsd-exportador:9102"]
+        labels:
+          componente: orquestador
+
+  # El último trabajo vigila el estado del almacén analítico, es decir las conexiones abiertas, el tamaño de las tablas y las transacciones por segundo.
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exportador:9187"]
+        labels:
+          componente: almacen

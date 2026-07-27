@@ -1,0 +1,97 @@
+# Traducción de las métricas de Airflow al modelo de datos de Prometheus.
+#
+# Airflow emite las métricas con el nombre completo dentro de la cadena, algo así como airflow.dagrun.duration.success.dag_ventas_diario.
+# Prometheus, en cambio, espera un nombre estable y etiquetas que varíen.
+# De ahí que sin este mapeo cada grafo generaría una métrica distinta y sería imposible graficarlos juntos.
+#
+# El orden de las reglas importa, puesto que se aplica la primera que coincide.
+# En consecuencia, las reglas más específicas van arriba.
+
+mappings:
+
+  # Las dos primeras reglas miden la duración de una corrida completa de un grafo.
+  - match: "airflow.dagrun.duration.success.*"
+    name: "airflow_dagrun_duracion_exitosa_segundos"
+    labels:
+      grafo: "$1"
+      resultado: "exitosa"
+
+  - match: "airflow.dagrun.duration.failed.*"
+    name: "airflow_dagrun_duracion_fallida_segundos"
+    labels:
+      grafo: "$1"
+      resultado: "fallida"
+
+  # La regla siguiente mide el retraso entre el momento programado y el arranque real.
+  # Al respecto, es la métrica que muestra si el programador viene atrasado con la cola de trabajo.
+  - match: "airflow.dagrun.schedule_delay.*"
+    name: "airflow_dagrun_retraso_programacion_segundos"
+    labels:
+      grafo: "$1"
+
+  # A continuación se mide la duración de cada tarea individual dentro de un grafo.
+  - match: "airflow.dag.*.*.duration"
+    name: "airflow_tarea_duracion_segundos"
+    labels:
+      grafo: "$1"
+      tarea: "$2"
+
+  # Las tres reglas que siguen registran el estado final de cada instancia de tarea.
+  - match: "airflow.ti.finish.*.*.*"
+    name: "airflow_tarea_finalizada_total"
+    labels:
+      grafo: "$1"
+      tarea: "$2"
+      estado: "$3"
+
+  - match: "airflow.ti_failures"
+    name: "airflow_ti_failures"
+    labels:
+      resultado: "fallo"
+
+  - match: "airflow.ti_successes"
+    name: "airflow_ti_successes"
+    labels:
+      resultado: "exito"
+
+  # El bloque siguiente reúne las métricas que informan sobre la salud del programador.
+  - match: "airflow.scheduler_heartbeat"
+    name: "airflow_scheduler_heartbeat"
+    labels: {}
+
+  - match: "airflow.scheduler.tasks.running"
+    name: "airflow_tareas_en_ejecucion"
+    labels: {}
+
+  - match: "airflow.scheduler.tasks.starving"
+    name: "airflow_tareas_sin_recursos"
+    labels: {}
+
+  - match: "airflow.executor.open_slots"
+    name: "airflow_ranuras_libres"
+    labels: {}
+
+  - match: "airflow.executor.queued_tasks"
+    name: "airflow_tareas_en_cola"
+    labels: {}
+
+  - match: "airflow.executor.running_tasks"
+    name: "airflow_tareas_ejecutor_activas"
+    labels: {}
+
+  # La regla siguiente cuenta los errores de importación de los archivos de grafos.
+  # Cabe señalar que un valor mayor a cero significa que hay un DAG con un error de sintaxis que Airflow no llegó a cargar.
+  - match: "airflow.dag_processing.import_errors"
+    name: "airflow_errores_de_importacion"
+    labels: {}
+
+  - match: "airflow.dag_processing.total_parse_time"
+    name: "airflow_tiempo_analisis_grafos_segundos"
+    labels: {}
+
+  # Por último, la regla de cierre convierte en métrica todo lo que no coincidió con ninguna regla anterior, reemplazando los puntos por guiones bajos.
+  # Sin ella, esas métricas se descartarían en silencio.
+  - match: "airflow\\.(.+)"
+    match_type: regex
+    name: "airflow_${1}"
+    labels: {}

@@ -1,0 +1,149 @@
+# Documentación y pruebas de la capa publicada.
+#
+# Los modelos de esta capa son los que consume el negocio, motivo por el cual llevan las pruebas más estrictas.
+# Al respecto, el razonamiento es simple: Un error que llega hasta acá ya resulta visible en un tablero, y para entonces alguien pudo haber tomado una decisión con un número equivocado.
+
+version: 2
+
+models:
+
+  - name: prep_ventas
+    description: >-
+      Detalle de ventas normalizado.
+      Conviene precisar que constituye la única puerta de entrada al dato crudo para el resto del proyecto.
+    columns:
+      - name: codigo_producto
+        description: Código de artículo en mayúsculas y sin espacios sobrantes.
+        data_tests:
+          - not_null
+      - name: fecha_venta
+        description: Fecha de la operación sin la hora.
+        data_tests:
+          - not_null
+      - name: unidades
+        description: >-
+          Unidades vendidas en la línea de factura.
+          Conviene precisar que siempre son positivas tras la validación del pipeline.
+        data_tests:
+          - not_null
+      - name: ingreso_linea
+        description: Importe de la línea de factura.
+        data_tests:
+          - not_null
+
+  - name: int_ventas_enriquecidas
+    description: >-
+      Detalle de ventas con los atributos de calendario y los segmentos de negocio que comparten los modelos de publicación.
+    columns:
+      - name: anio
+        data_tests:
+          - not_null
+      - name: anio_mes
+        data_tests:
+          - not_null
+      - name: segmento_importe
+        description: Clasificación de la línea según el importe facturado.
+        data_tests:
+          - accepted_values:
+              values: ["muy baja", "baja", "media", "alta", "muy alta"]
+      - name: segmento_volumen
+        description: Clasificación de la línea según la cantidad de unidades.
+        data_tests:
+          - accepted_values:
+              values: ["unitaria", "minorista", "mayorista", "volumen"]
+      - name: franja_horaria
+        description: Momento de la jornada comercial en que se registró la venta.
+        data_tests:
+          - accepted_values:
+              values: ["temprano", "media manana", "media tarde", "tarde"]
+
+  - name: pub_ingresos_producto_fecha
+    description: >-
+      Modelo principal del proyecto.
+      Contiene una fila por cada fecha y producto, con el ingreso total del día y sus medidas de apoyo.
+    columns:
+      - name: fecha
+        description: Día de la operación.
+        data_tests:
+          - not_null
+      - name: producto_id
+        description: Código del artículo.
+        data_tests:
+          - not_null
+      - name: ingreso_total
+        description: Suma del ingreso de todas las líneas de ese producto en ese día.
+        data_tests:
+          - not_null
+      - name: unidades_vendidas
+        description: Unidades del producto vendidas ese día.
+        data_tests:
+          - not_null
+      - name: facturas_distintas
+        description: Cantidad de comprobantes que incluyeron el producto ese día.
+        data_tests:
+          - not_null
+      - name: lineas_de_factura
+        description: Cantidad de renglones de factura agrupados en la fila.
+        data_tests:
+          - not_null
+
+  - name: pub_resumen_diario
+    description: >-
+      Serie temporal con una fila por día, sus métricas y la media móvil de siete días que suaviza el patrón semanal.
+    columns:
+      - name: fecha
+        description: Día calendario con al menos una venta registrada.
+        data_tests:
+          - not_null
+          - unique
+      - name: ingreso_total
+        description: Facturación total del día.
+        data_tests:
+          - not_null
+      - name: facturas_distintas
+        description: Cantidad de comprobantes emitidos ese día.
+        data_tests:
+          - not_null
+      - name: ticket_promedio
+        description: Ingreso dividido por la cantidad de comprobantes del día.
+
+  - name: pub_ranking_productos
+    description: >-
+      Productos ordenados por ingreso acumulado, con su participación individual y acumulada sobre el total del período.
+    columns:
+      - name: posicion
+        description: Lugar que ocupa el producto en el ranking, empezando por uno.
+        data_tests:
+          - not_null
+          - unique
+      - name: producto_id
+        description: Código del artículo.
+        data_tests:
+          - not_null
+          - unique
+      - name: participacion_porcentual
+        description: Porcentaje del ingreso total que aporta el producto.
+        data_tests:
+          - not_null
+      - name: participacion_acumulada
+        description: Suma de las participaciones hasta esta posición, incluida ella misma.
+        data_tests:
+          - not_null
+
+  - name: pub_ventas_por_pais
+    description: Facturación agrupada por país con su participación sobre el total.
+    columns:
+      - name: pais
+        description: País donde se registró la operación.
+        data_tests:
+          - not_null
+          - unique
+      - name: ingreso_total
+        description: Facturación acumulada del país en todo el período.
+        data_tests:
+          - not_null
+      - name: tipo_de_mercado
+        description: Clasificación del país entre mercado local y exportación.
+        data_tests:
+          - accepted_values:
+              values: ["mercado local", "exportacion", "sin identificar"]

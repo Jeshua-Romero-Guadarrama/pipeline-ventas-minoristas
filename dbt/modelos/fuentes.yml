@@ -1,0 +1,85 @@
+# Declaración de las tablas que el pipeline de Python deja en el almacén.
+#
+# Declarar las fuentes en lugar de escribir el nombre de la tabla dentro de cada consulta tiene dos beneficios concretos.
+# En primer lugar, el grafo de dependencias muestra de dónde sale cada dato.
+# En segundo lugar, si mañana cambia el nombre de una tabla, la corrección se hace en un solo lugar.
+#
+# Por su parte, la comprobación de frescura vigila que el pipeline haya corrido.
+# En caso de que el dato más reciente tenga más de un día, dbt avisa antes de construir modelos sobre información vieja.
+
+version: 2
+
+sources:
+  - name: crudo
+    description: >-
+      Zona de aterrizaje del almacén, que recibe sin modelizar y tal cual lo que escribe el pipeline de Python.
+      No debería consultarse directamente desde un tablero, puesto que para eso está la capa de publicación.
+    database: analitica
+    schema: crudo
+
+    tables:
+
+      - name: detalle_ventas
+        description: >-
+          Una fila por cada línea de factura que superó las reglas de calidad.
+          Cabe señalar que es la tabla de mayor granularidad del almacén y la base de todo lo demás.
+        loaded_at_field: fecha
+        freshness:
+          warn_after: { count: 26, period: hour }
+          error_after: { count: 72, period: hour }
+        columns:
+          - name: factura
+            description: Número identificador del comprobante de venta.
+          - name: producto_id
+            description: Código de artículo asignado por el comercio.
+            data_tests:
+              - not_null
+          - name: descripcion
+            description: Texto descriptivo del artículo.
+          - name: cantidad
+            description: >-
+              Unidades vendidas en la línea de factura.
+              Conviene precisar que siempre es positiva tras la validación del pipeline.
+            data_tests:
+              - not_null
+          - name: fecha
+            description: Fecha de la operación sin la hora.
+            data_tests:
+              - not_null
+          - name: precio_unitario
+            description: Precio de una unidad en libras esterlinas.
+            data_tests:
+              - not_null
+          - name: ingreso_total
+            description: Producto de cantidad por precio unitario, redondeado a dos decimales.
+            data_tests:
+              - not_null
+          - name: cliente_id
+            description: >-
+              Identificador del cliente.
+              Admite nulos porque muchas ventas de mostrador no se asocian a ninguna cuenta.
+          - name: pais
+            description: País donde se registró la venta.
+
+      - name: ingresos_por_producto_fecha
+        description: >-
+          Agregado por fecha y por producto que calcula el pipeline de Python.
+          El agregado se conserva como fuente para poder contrastarlo contra el que reconstruye dbt y detectar así cualquier divergencia entre ambos caminos.
+        columns:
+          - name: fecha
+            data_tests:
+              - not_null
+          - name: producto_id
+            data_tests:
+              - not_null
+          - name: ingreso_total
+            data_tests:
+              - not_null
+
+      - name: resumen_diario
+        description: Métricas agregadas por día que calcula el pipeline de Python.
+        columns:
+          - name: fecha
+            data_tests:
+              - not_null
+              - unique

@@ -1,0 +1,557 @@
+{
+  "uid": "pipeline-ventas-general",
+  "title": "Pipeline de ventas minoristas",
+  "description": "Estado de ejecucion, calidad de datos y metricas de negocio del pipeline end to end",
+  "tags": ["pipeline", "ventas", "calidad"],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "etapa",
+        "label": "Etapa del pipeline",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus-pipeline"
+        },
+        "query": "label_values(pipeline_ventas_duracion_segundos, etapa)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Estado general",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Resultado de la ultima corrida",
+      "description": "Vale 1 cuando el pipeline completo todas sus etapas sin errores",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pipeline_ventas_ejecucion_exitosa",
+          "legendFormat": "estado"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "CON ERROR", "color": "red", "index": 0 },
+                "1": { "text": "CORRECTA", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Antiguedad de los datos",
+      "description": "Tiempo transcurrido desde la ultima corrida exitosa",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 5, "w": 5, "x": 4, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - pipeline_ventas_ultima_ejecucion_exitosa_timestamp",
+          "legendFormat": "antiguedad"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 86400 },
+              { "color": "red", "value": 93600 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Ingreso total procesado",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 5, "w": 5, "x": 9, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pipeline_ventas_ingreso_total",
+          "legendFormat": "ingreso"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyGBP",
+          "decimals": 2,
+          "color": { "mode": "fixed", "fixedColor": "blue" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Productos distintos",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 5, "w": 5, "x": 14, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pipeline_ventas_productos_distintos",
+          "legendFormat": "productos"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0 },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Dias cubiertos",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 5, "w": 5, "x": 19, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pipeline_ventas_dias_cubiertos",
+          "legendFormat": "dias"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0 },
+        "overrides": []
+      }
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Volumen y calidad de datos",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "collapsed": false
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Filas al final de cada etapa",
+      "description": "Comparar las etapas muestra donde se pierden registros dentro del pipeline",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pipeline_ventas_filas_procesadas",
+          "legendFormat": "{{etapa}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Porcentaje de filas rechazadas",
+      "description": "El pipeline se detiene solo cuando el rechazo supera el quince por ciento",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pipeline_ventas_porcentaje_rechazo",
+          "legendFormat": "rechazo"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 15 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Filas rechazadas por regla de calidad",
+      "description": "Permite identificar rapidamente que regla se disparo cuando sube el rechazo",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, pipeline_ventas_filas_rechazadas_total)",
+          "legendFormat": "{{regla}}",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "legend": { "displayMode": "hidden" },
+        "xTickLabelRotation": 0
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Duracion de cada etapa",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pipeline_ventas_duracion_segundos{etapa=~\"$etapa\"}",
+          "legendFormat": "{{etapa}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "stacking": { "mode": "normal" }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Orquestacion con Airflow",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Latido del programador",
+      "description": "Sin latido no se dispara ninguna tarea programada",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(airflow_scheduler_heartbeat[5m]) * 60",
+          "legendFormat": "latidos por minuto"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Tareas finalizadas por estado",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 24 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(airflow_ti_successes[10m])",
+          "legendFormat": "exitosas"
+        },
+        {
+          "refId": "B",
+          "expr": "increase(airflow_ti_failures[10m])",
+          "legendFormat": "fallidas"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "fallidas" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "exitosas" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Ranuras libres y tareas en cola",
+      "description": "Si las ranuras libres llegan a cero, las tareas empiezan a esperar",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 24 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "airflow_ranuras_libres",
+          "legendFormat": "ranuras libres"
+        },
+        {
+          "refId": "B",
+          "expr": "airflow_tareas_en_cola",
+          "legendFormat": "tareas en cola"
+        },
+        {
+          "refId": "C",
+          "expr": "airflow_tareas_ejecutor_activas",
+          "legendFormat": "tareas activas"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "Almacen analitico",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "collapsed": false
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Disponibilidad de PostgreSQL",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 33 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pg_up",
+          "legendFormat": "estado"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "CAIDO", "color": "red", "index": 0 },
+                "1": { "text": "ACTIVO", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Conexiones abiertas al almacen",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 33 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(pg_stat_activity_count) by (datname)",
+          "legendFormat": "{{datname}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Servicios que responden",
+      "description": "Cada serie en 1 significa que Prometheus logra recolectar ese objetivo",
+      "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 33 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "spanNulls": false }
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "name": "Corridas fallidas",
+        "datasource": { "type": "prometheus", "uid": "prometheus-pipeline" },
+        "enable": true,
+        "iconColor": "red",
+        "expr": "pipeline_ventas_ejecucion_exitosa == 0",
+        "titleFormat": "Corrida con error"
+      }
+    ]
+  }
+}

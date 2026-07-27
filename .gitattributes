@@ -1,0 +1,20 @@
+# Los scripts de shell y los puntos de entrada de los contenedores tienen que conservar los finales de línea de estilo Unix.
+# En caso de que Git los convierta al estilo de Windows, el intérprete dentro del contenedor no encuentra el ejecutable y devuelve un error engañoso.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf
+
+# El resto de los archivos de texto se normaliza al guardarlos.
+*.py text
+*.sql text
+*.md text
+*.csv text
+*.json text
+
+# Los archivos binarios quedan fuera de cualquier conversión.
+*.parquet binary
+*.png binary
+*.docx binary
+*.xlsx binary

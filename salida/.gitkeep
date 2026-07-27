@@ -1,0 +1,15 @@
+# La presente carpeta recibe todo lo que genera el pipeline.
+# El contenido no se versiona porque es un resultado reproducible, de manera que se regenera por completo con el comando siguiente.
+#
+#     python ejecutar_pipeline.py
+#
+# La estructura que aparece al correrlo es la que sigue.
+#
+#   detalle_ventas/                    Parquet particionado por año y mes
+#   ingresos_por_producto_fecha/       Parquet con el resultado principal
+#   ingresos_por_producto_fecha.csv    El mismo resultado en CSV
+#   resumen_diario/                    Serie temporal diaria
+#   ranking_productos.csv              Los productos que más facturaron
+#   analitica_spark/                   Salidas del trabajo distribuido
+#   cuarentena/                        Filas rechazadas con su motivo
+#   reportes/                          Reporte JSON de cada corrida

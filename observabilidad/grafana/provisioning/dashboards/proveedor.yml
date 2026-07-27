@@ -1,0 +1,19 @@
+# Carga automática de los tableros que están versionados en el repositorio.
+#
+# Grafana revisa la carpeta indicada cada treinta segundos y aplica lo que encuentre.
+# Con allowUiUpdates en false, cualquier cambio hecho desde la interfaz se revierte.
+# De ese modo, las modificaciones tienen que pasar por el repositorio y quedan registradas.
+
+apiVersion: 1
+
+providers:
+  - name: tableros-pipeline
+    orgId: 1
+    folder: Pipeline de ventas
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/tableros
+      foldersFromFilesStructure: false

@@ -1,0 +1,456 @@
+# Definición de toda la infraestructura del proyecto.
+#
+# El archivo levanta cinco grupos de servicios que se pueden encender por separado mediante perfiles.
+# Al respecto, la intención es que nadie pague el costo de arrancar Grafana cuando solo quiere correr el pipeline una vez.
+#
+#   Almacenamiento   postgres
+#   Orquestación     airflow-inicializacion, airflow-servidor, airflow-programador
+#   Procesamiento    spark-maestro, spark-trabajador, pipeline
+#   Modelado         dbt
+#   Observabilidad   prometheus, grafana, pushgateway, statsd-exportador, postgres-exportador
+#
+# Ejemplos de uso
+#   docker compose up -d postgres
+#   docker compose --profile orquestacion up -d
+#   docker compose --profile observabilidad up -d
+#   docker compose run --rm pipeline
+#   docker compose run --rm dbt build
+#
+# Todos los puertos que se publican hacia el anfitrión se configuran desde el archivo .env.
+# Cabe señalar que los valores por defecto son los habituales de cada herramienta, de manera que en una máquina donde ya corre otra cosa en el 8080 basta con definir PUERTO_AIRFLOW sin tocar este archivo.
+# De ese modo se resuelve de una vez la fricción que aparece siempre al levantar el proyecto en un equipo que ya aloja otros contenedores.
+
+name: pipeline-ventas
+
+# Bloque reutilizable con lo que comparten los tres servicios de Airflow.
+# Al respecto, el ancla de YAML evita repetir cuarenta líneas tres veces (es justo donde se cuelan las inconsistencias cuando hay que cambiar algo).
+x-airflow-comun: &airflow-comun
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+  image: pipeline-ventas/airflow:1.0.0
+  environment: &airflow-entorno
+    # El ejecutor local corre las tareas como procesos hijos del programador.
+    # Dado que alcanza de sobra para este volumen, se evita sumar Redis y los trabajadores de Celery (serían dos servicios más para mantener).
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/proyecto/orquestacion/dags
+    AIRFLOW__CORE__PARALLELISM: "8"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "4"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: UTC
+
+    # Cada tarea arranca en un intérprete nuevo en lugar de bifurcarse desde el programador.
+    # Al respecto, la línea resuelve un problema muy concreto que apareció al ejecutar el pipeline completo.
+    # Puesto que al bifurcarse el proceso hijo hereda toda la memoria del programador, en una máquina con poca memoria libre eso basta para que el sistema operativo mate la tarea con la señal nueve, sin dejar ningún mensaje que explique qué pasó.
+    # En cambio, arrancar un intérprete limpio cuesta unos segundos más y elimina el problema por completo.
+    AIRFLOW__CORE__EXECUTE_TASKS_NEW_PYTHON_INTERPRETER: "True"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__WEBSERVER__WORKERS: "2"
+    AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "30"
+
+    # Airflow envía sus métricas internas por el protocolo StatsD.
+    # A continuación, el exportador las traduce al formato que entiende Prometheus.
+    AIRFLOW__METRICS__STATSD_ON: "true"
+    AIRFLOW__METRICS__STATSD_HOST: statsd-exportador
+    AIRFLOW__METRICS__STATSD_PORT: "9125"
+    AIRFLOW__METRICS__STATSD_PREFIX: airflow
+
+    # Las variables que siguen son la configuración que consume el código del pipeline.
+    PYTHONPATH: /opt/proyecto
+    DIR_DATOS: /opt/proyecto/datos
+    DIR_CRUDOS: /opt/proyecto/datos/crudos
+    DIR_EJEMPLOS: /opt/proyecto/datos/ejemplos
+    DIR_SALIDA: /opt/proyecto/salida
+    ALMACEN_HOST: postgres
+    ALMACEN_PUERTO: "5432"
+    ALMACEN_BASE: analitica
+    ALMACEN_USUARIO: analitica
+    ALMACEN_CONTRASENA: analitica
+    ALMACEN_ESQUEMA_CRUDO: crudo
+    PUSHGATEWAY_URL: http://pushgateway:9091
+    METRICAS_HABILITADAS: "true"
+    SPARK_MASTER_URL: spark://spark-maestro:7077
+    SPARK_PARTICIONES_BARAJADO: "8"
+    NIVEL_LOG: INFO
+    FORMATO_LOG: json
+  volumes:
+    # El proyecto se monta en lugar de copiarse dentro de la imagen.
+    # De ese modo, editar un DAG o un modelo de dbt surte efecto al instante y no obliga a reconstruir nada.
+    - ./:/opt/proyecto
+    - registros-airflow:/opt/airflow/logs
+  user: "50000:0"
+  # El límite de memoria por contenedor no está puesto para ahorrar recursos, sino para acotar dónde se resuelve la presión de memoria.
+  #
+  # Sin un límite declarado, todos los contenedores compiten por la memoria de la máquina virtual de Docker y, cuando esta se agota, el sistema operativo mata al proceso más grande, que suele ser justamente la tarea que procesa los datos.
+  # Cabe señalar que el síntoma es una tarea terminada con código de retorno menos nueve y sin ningún mensaje de error (resulta bastante difícil de diagnosticar la primera vez que aparece).
+  #
+  # Con el límite declarado, en cambio, el núcleo libera memoria dentro de este contenedor antes de recurrir a esa medida extrema.
+  # Adicionalmente, el valor se ajusta desde el archivo de entorno según la máquina.
+  mem_limit: ${MEMORIA_AIRFLOW:-2g}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - red-datos
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Almacenamiento
+  # ---------------------------------------------------------------------------
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: pipeline-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      # El idioma y la codificación quedan fijados para que el ordenamiento de texto sea el mismo en cualquier máquina donde se levante el proyecto.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${PUERTO_POSTGRES:-5432}:5432"
+    volumes:
+      - datos-postgres:/var/lib/postgresql/data
+      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # El resto de los servicios aguarda el resultado de esta comprobación antes de arrancar.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - red-datos
+
+  # ---------------------------------------------------------------------------
+  # Orquestación
+  # ---------------------------------------------------------------------------
+
+  airflow-inicializacion:
+    <<: *airflow-comun
+    container_name: pipeline-airflow-init
+    profiles: ["orquestacion", "completo"]
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        echo "Aplicando migraciones sobre la base de metadatos"
+        airflow db migrate
+
+        echo "Creando el usuario administrador si todavía no existe"
+        airflow users create \
+          --username "$${AIRFLOW_USUARIO:-admin}" \
+          --password "$${AIRFLOW_CONTRASENA:-admin}" \
+          --firstname Equipo \
+          --lastname Datos \
+          --role Admin \
+          --email datos@ejemplo.com || echo "El usuario ya existía"
+
+        echo "Registrando la conexión al almacén analítico"
+        airflow connections delete almacen_analitico 2>/dev/null || true
+        airflow connections add almacen_analitico \
+          --conn-type postgres \
+          --conn-host postgres \
+          --conn-port 5432 \
+          --conn-schema analitica \
+          --conn-login analitica \
+          --conn-password analitica
+
+        echo "Registrando la conexión al clúster de Spark"
+        airflow connections delete spark_cluster 2>/dev/null || true
+        airflow connections add spark_cluster \
+          --conn-type spark \
+          --conn-host spark://spark-maestro \
+          --conn-port 7077
+
+        echo "Inicialización completada"
+    environment:
+      <<: *airflow-entorno
+      AIRFLOW_USUARIO: ${AIRFLOW_USUARIO:-admin}
+      AIRFLOW_CONTRASENA: ${AIRFLOW_CONTRASENA:-admin}
+    restart: on-failure
+
+  airflow-servidor:
+    <<: *airflow-comun
+    container_name: pipeline-airflow-servidor
+    profiles: ["orquestacion", "completo"]
+    command: webserver
+    ports:
+      - "${PUERTO_AIRFLOW:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-inicializacion:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  airflow-programador:
+    <<: *airflow-comun
+    container_name: pipeline-airflow-programador
+    profiles: ["orquestacion", "completo"]
+    command: scheduler
+    # El programador necesita más margen que el resto, puesto que además de su propio proceso aloja las tareas que ejecuta el ejecutor local.
+    # De ahí que ese margen se note cuando la tarea es el pipeline sobre el histórico completo.
+    mem_limit: ${MEMORIA_PROGRAMADOR:-3g}
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 90s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-inicializacion:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Procesamiento distribuido
+  # ---------------------------------------------------------------------------
+
+  spark-maestro:
+    build:
+      context: .
+      dockerfile: docker/spark/Dockerfile
+    image: pipeline-ventas/spark:1.0.0
+    container_name: pipeline-spark-maestro
+    profiles: ["spark", "orquestacion", "completo"]
+    command: maestro
+    environment:
+      SPARK_MAESTRO_HOST: spark-maestro
+      SPARK_MAESTRO_PUERTO: "7077"
+      SPARK_INTERFAZ_PUERTO: "8080"
+      PYTHONPATH: /opt/proyecto
+    # El servicio corre con el mismo usuario que Airflow, dado que el controlador y los ejecutores se intercambian archivos a través de la carpeta de salida compartida.
+    user: "50000:0"
+    ports:
+      # La interfaz del maestro se publica en el 8081 porque el 8080 del anfitrión ya lo ocupa Airflow.
+      - "${PUERTO_SPARK_MAESTRO:-8081}:8080"
+      - "${PUERTO_SPARK_ENVIO:-7077}:7077"
+    volumes:
+      - ./:/opt/proyecto
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080 > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - red-datos
+
+  spark-trabajador:
+    build:
+      context: .
+      dockerfile: docker/spark/Dockerfile
+    image: pipeline-ventas/spark:1.0.0
+    container_name: pipeline-spark-trabajador
+    profiles: ["spark", "orquestacion", "completo"]
+    command: trabajador
+    environment:
+      SPARK_MAESTRO_HOST: spark-maestro
+      SPARK_MAESTRO_PUERTO: "7077"
+      SPARK_INTERFAZ_PUERTO: "8081"
+      # Los recursos del trabajador se limitan para que el clúster conviva con el resto de los servicios en una máquina de escritorio.
+      SPARK_WORKER_CORES: "2"
+      SPARK_WORKER_MEMORY: "2g"
+      PYTHONPATH: /opt/proyecto
+    user: "50000:0"
+    ports:
+      - "${PUERTO_SPARK_TRABAJADOR:-8082}:8081"
+    volumes:
+      - ./:/opt/proyecto
+    depends_on:
+      spark-maestro:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - red-datos
+
+  # El servicio siguiente es de un solo uso y sirve para correr el pipeline de Python bajo demanda.
+  pipeline:
+    build:
+      context: .
+      dockerfile: docker/spark/Dockerfile
+    image: pipeline-ventas/spark:1.0.0
+    container_name: pipeline-ejecucion
+    profiles: ["herramientas"]
+    entrypoint: ["python"]
+    command: ["ejecutar_pipeline.py"]
+    environment:
+      PYTHONPATH: /opt/proyecto
+      DIR_DATOS: /opt/proyecto/datos
+      DIR_CRUDOS: /opt/proyecto/datos/crudos
+      DIR_EJEMPLOS: /opt/proyecto/datos/ejemplos
+      DIR_SALIDA: /opt/proyecto/salida
+      ALMACEN_HOST: postgres
+      ALMACEN_USUARIO: analitica
+      ALMACEN_CONTRASENA: analitica
+      ALMACEN_BASE: analitica
+      PUSHGATEWAY_URL: http://pushgateway:9091
+      METRICAS_HABILITADAS: "true"
+      SPARK_MASTER_URL: spark://spark-maestro:7077
+      NIVEL_LOG: INFO
+      FORMATO_LOG: texto
+    volumes:
+      - ./:/opt/proyecto
+    # Conviene precisar que se usa el mismo identificador de usuario que los servicios de Airflow.
+    # En caso de que este servicio escribiera como root, la tarea de Airflow no podría borrar después los archivos que quedan en la carpeta de salida, motivo por el cual la corrida siguiente fallaría por permisos al intentar reescribirlos.
+    user: "50000:0"
+    networks:
+      - red-datos
+
+  # ---------------------------------------------------------------------------
+  # Modelado con dbt
+  # ---------------------------------------------------------------------------
+
+  dbt:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile
+    image: pipeline-ventas/airflow:1.0.0
+    container_name: pipeline-dbt
+    profiles: ["herramientas"]
+    entrypoint: ["/opt/dbt_entorno/bin/dbt"]
+    command: ["build"]
+    working_dir: /opt/proyecto/dbt
+    environment:
+      DBT_PROFILES_DIR: /opt/proyecto/dbt
+      ALMACEN_HOST: postgres
+      ALMACEN_PUERTO: "5432"
+      ALMACEN_BASE: analitica
+      ALMACEN_USUARIO: analitica
+      ALMACEN_CONTRASENA: analitica
+    volumes:
+      - ./:/opt/proyecto
+    user: "50000:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - red-datos
+
+  # ---------------------------------------------------------------------------
+  # Observabilidad
+  # ---------------------------------------------------------------------------
+
+  pushgateway:
+    image: prom/pushgateway:v1.10.0
+    container_name: pipeline-pushgateway
+    profiles: ["observabilidad", "orquestacion", "completo"]
+    command:
+      - --web.listen-address=:9091
+      # Las métricas se guardan en disco para que sobrevivan a un reinicio del contenedor.
+      # De lo contrario, cada reinicio borraría el historial de la última corrida.
+      - --persistence.file=/datos/metricas.bin
+      - --persistence.interval=1m
+    ports:
+      - "${PUERTO_PUSHGATEWAY:-9091}:9091"
+    volumes:
+      - datos-pushgateway:/datos
+    restart: unless-stopped
+    networks:
+      - red-datos
+
+  statsd-exportador:
+    image: prom/statsd-exporter:v0.28.0
+    container_name: pipeline-statsd-exportador
+    profiles: ["observabilidad", "orquestacion", "completo"]
+    command:
+      - --statsd.mapping-config=/etc/statsd/mapeo_airflow.yml
+      - --statsd.listen-udp=:9125
+      - --web.listen-address=:9102
+    ports:
+      - "${PUERTO_STATSD:-9102}:9102"
+      - "${PUERTO_STATSD_UDP:-9125}:9125/udp"
+    volumes:
+      - ./observabilidad/statsd:/etc/statsd:ro
+    restart: unless-stopped
+    networks:
+      - red-datos
+
+  postgres-exportador:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: pipeline-postgres-exportador
+    profiles: ["observabilidad", "completo"]
+    environment:
+      DATA_SOURCE_NAME: "postgresql://analitica:analitica@postgres:5432/analitica?sslmode=disable"
+    ports:
+      - "${PUERTO_POSTGRES_EXPORTADOR:-9187}:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - red-datos
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: pipeline-prometheus
+    profiles: ["observabilidad", "completo"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - "${PUERTO_PROMETHEUS:-9090}:9090"
+    volumes:
+      - ./observabilidad/prometheus:/etc/prometheus:ro
+      - datos-prometheus:/prometheus
+    restart: unless-stopped
+    networks:
+      - red-datos
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: pipeline-grafana
+    profiles: ["observabilidad", "completo"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USUARIO:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_CONTRASENA:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: ""
+      # El aprovisionamiento por archivos deja el tablero listo al arrancar, sin que nadie tenga que importarlo a mano ni recordar cómo se configuró.
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    ports:
+      - "${PUERTO_GRAFANA:-3000}:3000"
+    volumes:
+      - ./observabilidad/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observabilidad/grafana/tableros:/var/lib/grafana/tableros:ro
+      - datos-grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - red-datos
+
+networks:
+  red-datos:
+    driver: bridge
+    name: pipeline-ventas-red
+
+volumes:
+  datos-postgres:
+    name: pipeline-ventas-postgres
+  datos-prometheus:
+    name: pipeline-ventas-prometheus
+  datos-grafana:
+    name: pipeline-ventas-grafana
+  datos-pushgateway:
+    name: pipeline-ventas-pushgateway
+  registros-airflow:
+    name: pipeline-ventas-registros-airflow

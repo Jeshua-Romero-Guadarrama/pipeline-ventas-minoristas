@@ -1,0 +1,329 @@
+# Integración continua del pipeline de ventas.
+#
+# El flujo está pensado para dar la respuesta más útil en el menor tiempo posible.
+# Las etapas rápidas y baratas corren primero, mientras que las que necesitan levantar servicios solo se ejecutan si las anteriores pasaron.
+# De ese modo, un error de sintaxis se reporta en menos de un minuto en lugar de hacerlo después de diez.
+#
+#   1. verificacion_rapida      Revisa el estilo del código y las comprobaciones estáticas.
+#   2. pruebas_unitarias        Corre la batería completa sobre varias versiones de Python.
+#   3. validar_infraestructura  Valida la sintaxis de compose y construye las imágenes.
+#   4. prueba_de_integracion    Ejecuta el pipeline y dbt contra un PostgreSQL real.
+#   5. resumen                  Consolida el resultado de todo lo anterior.
+
+name: Integración continua
+
+on:
+  push:
+    branches: ["main", "desarrollo"]
+  pull_request:
+    branches: ["main"]
+  # El disparador siguiente permite lanzar el flujo a mano desde la interfaz de GitHub.
+  workflow_dispatch:
+
+# En caso de que lleguen varios envíos seguidos a la misma rama, se cancela el anterior.
+# Puesto que ese commit ya quedó superado, no tiene sentido gastar minutos de cómputo validándolo.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_POR_DEFECTO: "3.12"
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Etapa 1. Verificaciones rápidas
+  # ---------------------------------------------------------------------------
+
+  verificacion_rapida:
+    name: Estilo y comprobaciones estáticas
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_POR_DEFECTO }}
+          cache: pip
+
+      - name: Instalar herramientas de análisis
+        run: |
+          python -m pip install --upgrade pip
+          # PyYAML hace falta para el paso que comprueba la validez de los archivos de configuración.
+          # Al respecto, el intérprete de la máquina de integración no lo trae de serie, motivo por el cual esa comprobación fallaba con un error de módulo no encontrado que nada tenía que ver con el contenido de los archivos.
+          pip install ruff==0.8.6 PyYAML==6.0.2
+
+      - name: Revisar el estilo del código
+        run: ruff check trabajos pruebas orquestacion scripts ejecutar_pipeline.py
+
+      - name: Revisar el formato
+        run: ruff format --check trabajos pruebas orquestacion scripts ejecutar_pipeline.py
+        continue-on-error: true
+
+      - name: Comprobar que los archivos YAML son válidos
+        run: |
+          python - <<'PYTHON'
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          errores = []
+          for ruta in Path(".").rglob("*.yml"):
+              if any(parte in {".venv", "dbt_packages", "target"} for parte in ruta.parts):
+                  continue
+              try:
+                  # La lectura emplea load_all porque algunos archivos traen varios documentos en el mismo texto.
+                  list(yaml.safe_load_all(ruta.read_text(encoding="utf-8")))
+              except yaml.YAMLError as error:
+                  errores.append(f"{ruta}: {error}")
+
+          if errores:
+              print("Archivos YAML con problemas:")
+              for error in errores:
+                  print(f"  {error}")
+              sys.exit(1)
+          print("Todos los archivos YAML son válidos.")
+          PYTHON
+
+      - name: Comprobar que el JSON del tablero es válido
+        run: |
+          python -c "import json,pathlib; json.loads(pathlib.Path('observabilidad/grafana/tableros/pipeline_ventas.json').read_text(encoding='utf-8')); print('El tablero de Grafana es un JSON válido.')"
+
+  # ---------------------------------------------------------------------------
+  # Etapa 2. Pruebas unitarias
+  # ---------------------------------------------------------------------------
+
+  pruebas_unitarias:
+    name: Pruebas en Python ${{ matrix.version_python }}
+    needs: verificacion_rapida
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      # En caso de que una versión falle, interesa ver también el resultado de las otras.
+      # De ese modo se sabe si el problema es general o si afecta únicamente a una versión.
+      fail-fast: false
+      matrix:
+        version_python: ["3.11", "3.12"]
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.version_python }}
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requisitos-desarrollo.txt
+
+      - name: Ejecutar la batería de pruebas
+        env:
+          METRICAS_HABILITADAS: "false"
+          PUSHGATEWAY_URL: ""
+        run: |
+          pytest pruebas \
+            --cov=trabajos \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --junitxml=resultados-pruebas.xml \
+            -v
+
+      - name: Guardar los resultados de las pruebas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resultados-pruebas-python-${{ matrix.version_python }}
+          path: |
+            resultados-pruebas.xml
+            coverage.xml
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Etapa 3. Validación de la infraestructura
+  # ---------------------------------------------------------------------------
+
+  validar_infraestructura:
+    name: Infraestructura como código
+    needs: verificacion_rapida
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Comprobar la sintaxis de docker compose
+        run: docker compose config --quiet && echo "El archivo docker-compose.yml es válido."
+
+      - name: Preparar el constructor de imágenes
+        uses: docker/setup-buildx-action@v3
+
+      - name: Construir la imagen de Airflow
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/airflow/Dockerfile
+          push: false
+          load: true
+          tags: pipeline-ventas/airflow:ci
+          # La caché de GitHub evita reconstruir las capas que no cambiaron, lo que baja el tiempo de esta etapa de varios minutos a menos de uno.
+          cache-from: type=gha,scope=airflow
+          cache-to: type=gha,mode=max,scope=airflow
+
+      - name: Construir la imagen de Spark
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/spark/Dockerfile
+          push: false
+          load: true
+          tags: pipeline-ventas/spark:ci
+          cache-from: type=gha,scope=spark
+          cache-to: type=gha,mode=max,scope=spark
+
+      - name: Comprobar que la imagen de Spark funciona
+        run: |
+          docker run --rm --entrypoint python pipeline-ventas/spark:ci -c \
+            "import pyspark; print('PySpark', pyspark.__version__)"
+
+  # ---------------------------------------------------------------------------
+  # Etapa 4. Prueba de integración con servicios reales
+  # ---------------------------------------------------------------------------
+
+  prueba_de_integracion:
+    name: Pipeline y dbt contra PostgreSQL
+    needs: [pruebas_unitarias, validar_infraestructura]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: analitica
+          POSTGRES_PASSWORD: analitica
+          POSTGRES_DB: analitica
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U analitica"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ALMACEN_HOST: localhost
+      ALMACEN_PUERTO: "5432"
+      ALMACEN_BASE: analitica
+      ALMACEN_USUARIO: analitica
+      ALMACEN_CONTRASENA: analitica
+      METRICAS_HABILITADAS: "false"
+      PUSHGATEWAY_URL: ""
+      DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_POR_DEFECTO }}
+          cache: pip
+
+      - name: Instalar dependencias del pipeline
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requisitos.txt
+
+      - name: Crear los esquemas del almacén
+        run: |
+          PGPASSWORD=analitica psql -h localhost -U analitica -d analitica <<'SQL'
+          CREATE SCHEMA IF NOT EXISTS crudo;
+          CREATE SCHEMA IF NOT EXISTS preparado;
+          CREATE SCHEMA IF NOT EXISTS publicado;
+          SQL
+
+      - name: Ejecutar el pipeline sobre la muestra versionada
+        run: |
+          python ejecutar_pipeline.py \
+            --entrada datos/ejemplos/ventas_minoristas_muestra.csv \
+            --formato-log texto
+
+      - name: Comprobar que se generaron los resultados
+        run: |
+          test -d salida/ingresos_por_producto_fecha || (echo "Falta el Parquet del agregado" && exit 1)
+          test -f salida/ingresos_por_producto_fecha.csv || (echo "Falta el CSV del agregado" && exit 1)
+          test -f salida/reportes/reporte_ultima_corrida.json || (echo "Falta el reporte" && exit 1)
+          echo "Todos los resultados esperados están presentes."
+
+      - name: Instalar dbt
+        run: pip install dbt-core==1.9.1 dbt-postgres==1.9.0
+
+      - name: Resolver dependencias de dbt
+        working-directory: dbt
+        run: dbt deps
+
+      - name: Construir los modelos del almacén
+        working-directory: dbt
+        run: dbt run --target local
+
+      - name: Ejecutar las pruebas de datos
+        working-directory: dbt
+        run: dbt test --target local
+
+      - name: Guardar los artefactos de la corrida
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artefactos-integracion
+          path: |
+            salida/reportes/
+            salida/ingresos_por_producto_fecha.csv
+            dbt/target/
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Etapa 5. Resumen
+  # ---------------------------------------------------------------------------
+
+  resumen:
+    name: Resultado consolidado
+    needs: [verificacion_rapida, pruebas_unitarias, validar_infraestructura, prueba_de_integracion]
+    runs-on: ubuntu-latest
+    # La etapa corre siempre, de manera que también informe cuando alguna de las anteriores falló.
+    if: always()
+
+    steps:
+      - name: Escribir el resumen de la corrida
+        run: |
+          {
+            echo "## Resultado de la integración continua"
+            echo ""
+            echo "| Etapa | Resultado |"
+            echo "| --- | --- |"
+            echo "| Estilo y comprobaciones estáticas | ${{ needs.verificacion_rapida.result }} |"
+            echo "| Pruebas unitarias | ${{ needs.pruebas_unitarias.result }} |"
+            echo "| Infraestructura como código | ${{ needs.validar_infraestructura.result }} |"
+            echo "| Integración con PostgreSQL | ${{ needs.prueba_de_integracion.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fallar si alguna etapa no pasó
+        if: |
+          needs.verificacion_rapida.result != 'success' ||
+          needs.pruebas_unitarias.result != 'success' ||
+          needs.validar_infraestructura.result != 'success' ||
+          needs.prueba_de_integracion.result != 'success'
+        run: |
+          echo "Al menos una etapa de la integración continua no pasó."
+          exit 1

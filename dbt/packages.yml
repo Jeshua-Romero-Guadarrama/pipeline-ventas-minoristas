@@ -1,0 +1,9 @@
+# Paquetes externos de dbt.
+#
+# dbt_utils aporta pruebas y macros que de otro modo habría que escribir a mano en cada proyecto, como la unicidad sobre una combinación de columnas o la comprobación de que una expresión se cumple en todas las filas.
+#
+# La versión se fija con un rango cerrado para que una publicación nueva del paquete no cambie el comportamiento del proyecto sin que nadie lo haya decidido.
+
+packages:
+  - package: dbt-labs/dbt_utils
+    version: [">=1.3.0", "<1.4.0"]

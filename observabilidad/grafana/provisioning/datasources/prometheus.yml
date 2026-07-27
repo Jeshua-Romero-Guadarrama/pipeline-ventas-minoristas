@@ -1,0 +1,21 @@
+# Origen de datos de Grafana, definido por archivo.
+#
+# Configurarlo así en lugar de hacerlo desde la interfaz tiene una ventaja concreta.
+# Al respecto, la configuración queda versionada en el repositorio, se revisa junto con el código y se reconstruye igual en cualquier máquina.
+# De ese modo, nadie tiene que acordarse de qué se tocó a mano después de perder el volumen de Grafana.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus-pipeline
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # El intervalo tiene que coincidir con el scrape_interval de Prometheus, de manera que los gráficos no muestren huecos falsos entre los puntos.
+      timeInterval: 15s
+      httpMethod: POST
+      manageAlerts: false
